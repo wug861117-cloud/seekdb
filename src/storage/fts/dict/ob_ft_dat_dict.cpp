@@ -356,6 +356,12 @@ size_t ObArrayHashMap::estimate_capacity(size_t word_num)
 {
   constexpr size_t MIN_CAPACITY = 101;                   // prime
   size_t capacity = MAX(word_num * 4 / 3, MIN_CAPACITY); // 75%
+  // find/insert probe with a step of 3; if capacity were divisible by 3 the
+  // probe sequence would only reach 1/3 of the slots (missing keys / infinite
+  // insert loop). Bump capacity until it is coprime with the probe step.
+  while (0 == capacity % 3) {
+    capacity++;
+  }
   return capacity;
 }
 } //  namespace storage

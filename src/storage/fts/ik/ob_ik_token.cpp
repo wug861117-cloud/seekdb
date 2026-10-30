@@ -138,15 +138,31 @@ bool ObIKTokenChain::better_than(const ObIKTokenChain &other) const
   }
 
   // more average distance is better
-  int64_t this_x_weight = x_weight();
-  int64_t other_x_weight = other.x_weight();
+  // x_weight and p_weight both iterate the whole token list; fold the two
+  // passes into a single traversal to halve the work on this hot comparison.
+  int64_t this_x_weight = 1;
+  int64_t other_x_weight = 1;
+  int64_t this_p_weight = 0;
+  int64_t other_p_weight = 0;
+  {
+    int p = 0;
+    for (const ObIKToken &token : list_.tokens()) {
+      ++p;
+      this_x_weight *= token.char_cnt_;
+      this_p_weight += p * token.char_cnt_;
+    }
+    p = 0;
+    for (const ObIKToken &token : other.list_.tokens()) {
+      ++p;
+      other_x_weight *= token.char_cnt_;
+      other_p_weight += p * token.char_cnt_;
+    }
+  }
   if (this_x_weight != other_x_weight) {
     return this_x_weight > other_x_weight;
   }
 
   // position
-  int64_t this_p_weight = p_weight();
-  int64_t other_p_weight = other.p_weight();
   return this_p_weight > other_p_weight;
 }
 

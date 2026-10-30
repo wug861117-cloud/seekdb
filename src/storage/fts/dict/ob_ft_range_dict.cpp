@@ -380,24 +380,34 @@ int ObFTRangeDict::match_with_hit(const ObString &single_word,
 
 int ObFTRangeDict::find_first_char_range(const ObString &single_word, ObIFTDict *&dict) const
 {
+  // Ranges are built in ascending first-character order (see build_one_range:
+  // each range covers a consecutive run of keys sharing the same first char,
+  // and keys are consumed in dictionary order). The start_ field is therefore
+  // non-decreasing, so a binary search (O(n) -> O(log n)) is valid.
+  // To stay bit-for-bit equivalent with the original linear scan (which
+  // returns the *first* range whose start_ == word), we lower-bound on start_
+  // and then confirm equality.
   int ret = OB_SUCCESS;
-  bool found = false;
-  for (int i = 0; OB_SUCC(ret) && !found && i < range_dicts_.size(); ++i) {
-    if (ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                          range_dicts_[i].start_.get_word(),
-                          single_word)
-            <= 0
-        && ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                             range_dicts_[i].end_.get_word(),
-                             single_word)
-               >= 0) {
-      dict = range_dicts_[i].dict_;
-      found = true;
+  const ObCollationType coll = ObCollationType::CS_TYPE_UTF8MB4_BIN;
+  const int64_t n = static_cast<int64_t>(range_dicts_.size());
+  int64_t lo = 0;
+  int64_t hi = n;  // first index with start_ >= single_word
+  while (lo < hi) {
+    int64_t mid = (lo + hi) >> 1;
+    int c = ObCharset::strcmp(coll, range_dicts_[mid].start_.get_word(), single_word);
+    if (c < 0) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
     }
   }
-  if (!found) {
+  if (lo >= n) {
+    ret = OB_ENTRY_NOT_EXIST;
+  } else if (0 != ObCharset::strcmp(coll, range_dicts_[lo].start_.get_word(), single_word)) {
     // not found, dis match
     ret = OB_ENTRY_NOT_EXIST;
+  } else {
+    dict = range_dicts_[lo].dict_;
   }
   return ret;
 }
