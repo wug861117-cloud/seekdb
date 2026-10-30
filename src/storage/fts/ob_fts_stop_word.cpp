@@ -198,20 +198,19 @@ int ObAddWord::check_stopword(const ObFTWord &ft_word, bool &is_stopword)
 int ObAddWord::groupby_word(const ObFTWord &word, const int64_t word_freq)
 {
   int ret = OB_SUCCESS;
-  int64_t word_count = 0;
   if (OB_UNLIKELY(word.empty() || word_freq <= 0)) {
     ret = OB_INVALID_ARGUMENT;
   } else if (!flag_.groupby_word()) {
     if (OB_FAIL(word_map_.set_refactored(word, 1/*word count*/))) {
     }
-  } else if (OB_FAIL(word_map_.get_refactored(word, word_count)) && OB_HASH_NOT_EXIST != ret) {
   } else {
-    if (OB_HASH_NOT_EXIST == ret) {
-      word_count = 1;
-    } else {
-      word_count += word_freq;
-    }
-    if (OB_FAIL(word_map_.set_refactored(word, word_count, 1/*overwrite*/))) {
+    // get() returns the value pointer for an existing key in a single hash
+    // lookup; mutate it in place and skip the second set_refactored lookup.
+    // Only new words pay the insert lookup.
+    int64_t *existing = word_map_.get(word);
+    if (nullptr != existing) {
+      *existing += word_freq;
+    } else if (OB_FAIL(word_map_.set_refactored(word, word_freq))) {
     }
   }
   return ret;
