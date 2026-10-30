@@ -74,27 +74,60 @@ void ObStopWordChecker::destroy()
 int ObStopWordChecker::check_stopword(const ObFTWord &word, bool &is_stopword)
 {
   int ret = OB_SUCCESS;
-  
-  
-  common::ObArenaAllocator allocator(lib::ObMemAttr("ChkStopWord"));
+  is_stopword = false;
+
   if (OB_UNLIKELY(!inited_)) {
     ret = OB_NOT_INIT;
   } else if (OB_UNLIKELY(word.empty())) {
     ret = OB_INVALID_ARGUMENT;
   } else {
-    common::ObString cmp_str;
-    // do nothing set out with in if type is the same.
-    if (OB_FAIL(common::ObCharset::charset_convert(
-                                       allocator,
-                                       word.get_word().get_string(),
-                                       word.get_collation_type(),
-                                       stopword_type_.get_collation_type(),
-                                       cmp_str))) {
+    const ObString src = word.get_word().get_string();
+    // The stop-word table is entirely lowercase ASCII and at most
+    // FTS_STOP_WORD_MAX_LENGTH bytes. For a pure-ASCII word the UTF8MB4_
+    // GENERAL_CI fold is exactly the ASCII lowercase mapping, identical for
+    // every UTF8MB4 collation, so we can check on a stack buffer and avoid
+    // constructing a fresh ObArenaAllocator + charset_convert per word. Words
+    // containing non-ASCII bytes (or longer than any stop word) fall back to
+    // the original charset_convert path to preserve exact semantics.
+    bool all_ascii = true;
+    for (int64_t i = 0; i < src.length(); ++i) {
+      if (static_cast<unsigned char>(src[i]) >= 0x80) {
+        all_ascii = false;
+        break;
+      }
+    }
+    if (!all_ascii || src.length() > FTS_STOP_WORD_MAX_LENGTH) {
+      if (!all_ascii) {
+        // non-ASCII word: preserve the original full charset conversion
+        common::ObArenaAllocator allocator(lib::ObMemAttr("ChkStopWord"));
+        common::ObString cmp_str;
+        if (OB_FAIL(common::ObCharset::charset_convert(
+            allocator, src, word.get_collation_type(),
+            stopword_type_.get_collation_type(), cmp_str))) {
+        } else {
+          ObFTWord converted(cmp_str.length(), cmp_str.ptr(), stopword_type_);
+          ret = stopword_set_.exist_refactored(converted);
+          if (OB_HASH_NOT_EXIST == ret) {
+            ret = OB_SUCCESS;
+          } else if (OB_HASH_EXIST == ret) {
+            is_stopword = true;
+            ret = OB_SUCCESS;
+          } else if (OB_SUCC(ret)) {
+            ret = OB_ERR_UNEXPECTED;
+          } else {
+          }
+        }
+      }
+      // else: longer than any stop word, not a stop word
     } else {
-      ObFTWord converted(cmp_str.length(), cmp_str.ptr(), stopword_type_);
+      char buf[FTS_STOP_WORD_MAX_LENGTH + 1];
+      for (int64_t i = 0; i < src.length(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(src[i]);
+        buf[i] = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + ('a' - 'A')) : static_cast<char>(c);
+      }
+      ObFTWord converted(src.length(), buf, stopword_type_);
       ret = stopword_set_.exist_refactored(converted);
       if (OB_HASH_NOT_EXIST == ret) {
-        is_stopword = false;
         ret = OB_SUCCESS;
       } else if (OB_HASH_EXIST == ret) {
         is_stopword = true;
