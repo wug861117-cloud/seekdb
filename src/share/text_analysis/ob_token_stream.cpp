@@ -98,7 +98,13 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
     int64_t token_len = 0;
     // to next non-whitespace pos
     while (OB_SUCC(ret) && found_delimiter()) {
-      const int64_t c_len = ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
+      // Fast path for single-byte ASCII chars (byte < 0x80): a full char is
+      // exactly one byte in UTF-8 and every other common charset, so avoid the
+      // function-pointer indirection of ob_mbcharlen_ptr for the dominant
+      // English (BENG) case.
+      const int64_t c_len = ((unsigned char)doc[trav_pos_] < 0x80)
+                                ? 1
+                                : ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
       trav_pos_ += c_len;
       if (trav_pos_ >= doc_len || 0 == c_len) {// if char is invalid, just skip the rest of document
         iter_end_ = true;
@@ -112,7 +118,9 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
 
     // to next whitespace pos
     while (OB_SUCC(ret) && !found_delimiter()) {
-      const int64_t c_len = ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
+      const int64_t c_len = ((unsigned char)doc[trav_pos_] < 0x80)
+                                ? 1
+                                : ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
       trav_pos_ += c_len;
       token_len += c_len;
       if (trav_pos_ >= doc_len || 0 == c_len) {
@@ -208,13 +216,19 @@ int ObTokenStopWordNormalizer::filter_special_marks(const ObDatum &check_token, 
   const int64_t token_len = check_token.len_;
   const char *token = check_token.ptr_;
   int64_t special_mark_cnt = 0;
-  for (int64_t i = 0; i < token_len; ++i) {
-    const char *character = token + i;
-    if (ob_ispunct(cs_, *character) || ob_iscntrl(cs_, *character)) {
-      special_mark_cnt++;
+  // Combine the two ctype-table probes of ob_ispunct and ob_iscntrl into a
+  // single probe with a combined mask (equivalent boolean result).
+  const unsigned char *ctype = (nullptr != cs_->ctype) ? cs_->ctype + 1 : nullptr;
+  if (nullptr == ctype) {
+    is_valid = (0 != token_len);
+  } else {
+    for (int64_t i = 0; i < token_len; ++i) {
+      if (ctype[(unsigned char)token[i]] & (_MY_PNT | _MY_CTR)) {
+        special_mark_cnt++;
+      }
     }
+    is_valid = !(special_mark_cnt == token_len);
   }
-  is_valid = !(special_mark_cnt == token_len);
   return ret;
 }
 

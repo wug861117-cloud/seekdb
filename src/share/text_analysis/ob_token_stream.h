@@ -148,7 +148,12 @@ private:
   virtual int inner_init(const ObCharsetInfo *cs, ObITokenStream &in_stream) override;
   int build_grouping_map();
 private:
-  static const int64_t DEFAULT_HASH_MAP_BUCKET_CNT = 128;
+  // Per-document token count for the benchmark docs is typically a few
+  // hundred; ObHashMap with the default EXTEND_RATIO=1 never grows the bucket
+  // array, so a too-small initial bucket count causes long hash chains and
+  // O(n) probing per token during grouping. Size the table up-front so common
+  // documents keep chains near length 1.
+  static const int64_t DEFAULT_HASH_MAP_BUCKET_CNT = 2048;
   ObArenaAllocator token_allocator_;
   common::hash::ObHashMap<ObString, int64_t> grouping_map_;
   common::hash::ObHashMap<ObString, int64_t>::const_iterator map_iter_;
